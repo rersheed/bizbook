@@ -1,3 +1,7 @@
+-- NOTE: This file was a draft and does NOT match the hosted project.
+-- Hosted columns differ (business_name, owner_user_id, selling_price, sale_date, ...).
+-- Do not re-apply. Production RLS lives in 002_membership_rls.sql.
+
 -- BizBook V1 schema
 -- Parent applies via Supabase MCP. Demo-open anon policies for prototype — tighten before production.
 

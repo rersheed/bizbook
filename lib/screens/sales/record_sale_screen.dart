@@ -79,14 +79,24 @@ class _RecordSaleScreenState extends State<RecordSaleScreen>
               lineTotal: c.qty * c.unitPrice,
             ))
         .toList();
-    await store.recordSale(
+    final sale = await store.recordSale(
       items: items,
       note: note.text.trim().isEmpty ? null : note.text.trim(),
     );
     setState(() => saving = false);
     if (!mounted) return;
+    if (sale.syncStatus == SyncStatus.failed) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(store.lastError ?? 'Could not save sale')),
+      );
+      return;
+    }
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Sale saved')),
+      SnackBar(
+        content: Text(sale.syncStatus == SyncStatus.pending
+            ? 'Saved on this device. Will sync when online.'
+            : 'Sale saved'),
+      ),
     );
     Navigator.pop(context);
   }
@@ -104,7 +114,7 @@ class _RecordSaleScreenState extends State<RecordSaleScreen>
     }
     setState(() => saving = true);
     final store = context.read<AppStore>();
-    await store.recordSale(
+    final sale = await store.recordSale(
       items: [
         SaleItem(
           id: const Uuid().v4(),
@@ -118,8 +128,18 @@ class _RecordSaleScreenState extends State<RecordSaleScreen>
     );
     setState(() => saving = false);
     if (!mounted) return;
+    if (sale.syncStatus == SyncStatus.failed) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(store.lastError ?? 'Could not save sale')),
+      );
+      return;
+    }
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Sale saved')),
+      SnackBar(
+        content: Text(sale.syncStatus == SyncStatus.pending
+            ? 'Saved on this device. Will sync when online.'
+            : 'Sale saved'),
+      ),
     );
     Navigator.pop(context);
   }

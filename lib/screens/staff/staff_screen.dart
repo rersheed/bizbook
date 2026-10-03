@@ -12,6 +12,7 @@ class StaffScreen extends StatelessWidget {
   Future<void> _invite(BuildContext context) async {
     final name = TextEditingController();
     final email = TextEditingController();
+    final password = TextEditingController();
     final ok = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
@@ -29,7 +30,7 @@ class StaffScreen extends StatelessWidget {
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
             const SizedBox(height: 6),
             const Text(
-              'Demo invite creates a member who can log in with password demo1234.',
+              'Creates a staff login for this business. They sign in with the email and password you set.',
               style: TextStyle(color: BizColors.muted, fontSize: 13),
             ),
             const SizedBox(height: 12),
@@ -42,10 +43,18 @@ class StaffScreen extends StatelessWidget {
               keyboardType: TextInputType.emailAddress,
               decoration: const InputDecoration(labelText: 'Email *'),
             ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: password,
+              obscureText: true,
+              decoration: const InputDecoration(labelText: 'Password (6+) *'),
+            ),
             const SizedBox(height: 16),
             FilledButton(
               onPressed: () {
-                if (name.text.trim().isEmpty || email.text.trim().isEmpty) {
+                if (name.text.trim().isEmpty ||
+                    email.text.trim().isEmpty ||
+                    password.text.length < 6) {
                   return;
                 }
                 Navigator.pop(ctx, true);
@@ -57,13 +66,17 @@ class StaffScreen extends StatelessWidget {
       ),
     );
     if (ok != true || !context.mounted) return;
-    final err = await context.read<AppStore>().inviteStaff(
+    final store = context.read<AppStore>();
+    final err = await store.inviteStaff(
           email: email.text,
           displayName: name.text,
+          password: password.text,
         );
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(err ?? 'Staff added — password: demo1234')),
+      SnackBar(
+        content: Text(err ?? store.staffNotice ?? 'Staff added'),
+      ),
     );
   }
 

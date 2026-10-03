@@ -97,7 +97,7 @@ class MoreScreen extends StatelessWidget {
                 'Sync status',
                 store.supabaseReady
                     ? '${store.pendingSyncCount} pending'
-                    : 'Demo / offline outbox',
+                    : 'Not connected',
                 () => Navigator.push(
                   context,
                   MaterialPageRoute(builder: (_) => const SyncStatusScreen()),
@@ -107,7 +107,7 @@ class MoreScreen extends StatelessWidget {
                 context,
                 Icons.info_outline,
                 'About BizBook',
-                'V1 · ${SupabaseConfig.isConfigured ? 'Supabase wired' : 'Demo mode'}',
+                'V1 · ${SupabaseConfig.isConfigured ? 'Supabase' : 'Not connected'}',
                 () => showAboutDialog(
                   context: context,
                   applicationName: 'BizBook',
@@ -133,37 +133,6 @@ class MoreScreen extends StatelessWidget {
                 },
                 icon: const Icon(Icons.logout),
                 label: const Text('Sign out'),
-              ),
-              const SizedBox(height: 8),
-              TextButton(
-                onPressed: () async {
-                  final confirm = await showDialog<bool>(
-                    context: context,
-                    builder: (ctx) => AlertDialog(
-                      title: const Text('Reset demo data?'),
-                      content: const Text(
-                          'Reloads Haruna Stores sample products, sales, and expenses.'),
-                      actions: [
-                        TextButton(
-                            onPressed: () => Navigator.pop(ctx, false),
-                            child: const Text('Cancel')),
-                        FilledButton(
-                            onPressed: () => Navigator.pop(ctx, true),
-                            child: const Text('Reset')),
-                      ],
-                    ),
-                  );
-                  if (confirm == true) {
-                    await store.resetDemoData();
-                    if (!context.mounted) return;
-                    Navigator.of(context).pushAndRemoveUntil(
-                      MaterialPageRoute(builder: (_) => const LoginScreen()),
-                      (_) => false,
-                    );
-                  }
-                },
-                child: const Text('Reset demo data',
-                    style: TextStyle(color: BizColors.danger)),
               ),
             ],
           ),

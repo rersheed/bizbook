@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/theme.dart';
 import '../../data/app_store.dart';
@@ -15,10 +16,14 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final email = TextEditingController(text: 'owner@bizbook.demo');
-  final password = TextEditingController(text: 'demo1234');
+  final email = TextEditingController();
+  final password = TextEditingController();
   bool loading = false;
   bool obscure = true;
+
+  static final _apkUri = Uri.parse(
+    'https://github.com/rersheed/bizbook/releases/download/v0.1.0/bizbook-v0.1.0.apk',
+  );
 
   @override
   void dispose() {
@@ -31,8 +36,8 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => loading = true);
     final store = context.read<AppStore>();
     final ok = await store.login(email.text, password.text);
-    setState(() => loading = false);
     if (!mounted) return;
+    setState(() => loading = false);
     if (!ok) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(store.lastError ?? 'Login failed')),
@@ -45,6 +50,19 @@ class _LoginScreenState extends State<LoginScreen> {
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(builder: (_) => next),
     );
+  }
+
+  Future<void> _downloadApk() async {
+    final opened = await launchUrl(
+      _apkUri,
+      mode: LaunchMode.externalApplication,
+      webOnlyWindowName: '_blank',
+    );
+    if (!opened && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not open the Android download')),
+      );
+    }
   }
 
   @override
@@ -80,6 +98,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   TextField(
                     controller: email,
                     keyboardType: TextInputType.emailAddress,
+                    autofillHints: const [AutofillHints.email],
                     decoration: const InputDecoration(
                       labelText: 'Email',
                       prefixIcon: Icon(Icons.mail_outline),
@@ -89,6 +108,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   TextField(
                     controller: password,
                     obscureText: obscure,
+                    autofillHints: const [AutofillHints.password],
                     decoration: InputDecoration(
                       labelText: 'Password',
                       prefixIcon: const Icon(Icons.lock_outline),
@@ -121,28 +141,19 @@ class _LoginScreenState extends State<LoginScreen> {
                     },
                     child: const Text('Create account'),
                   ),
-                  const SizedBox(height: 24),
-                  Container(
-                    padding: const EdgeInsets.all(14),
-                    decoration: BoxDecoration(
-                      color: BizColors.accent.withValues(alpha: 0.35),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: BizColors.accent),
+                  const SizedBox(height: 16),
+                  OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: BizColors.primary,
+                      side: const BorderSide(
+                        color: BizColors.primary,
+                        width: 1.4,
+                      ),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
                     ),
-                    child: const Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('Demo logins',
-                            style: TextStyle(fontWeight: FontWeight.w700)),
-                        SizedBox(height: 6),
-                        Text('Owner: owner@bizbook.demo / demo1234'),
-                        Text('Staff: staff@bizbook.demo / demo1234'),
-                        SizedBox(height: 4),
-                        Text('Business: Haruna Stores (NGN)',
-                            style: TextStyle(
-                                color: BizColors.muted, fontSize: 12)),
-                      ],
-                    ),
+                    onPressed: _downloadApk,
+                    icon: const Icon(Icons.android),
+                    label: const Text('Download Android app'),
                   ),
                 ],
               ),

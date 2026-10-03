@@ -38,7 +38,7 @@ class SyncStatusScreen extends StatelessWidget {
                 SnackBar(
                   content: Text(store.supabaseReady
                       ? 'Sync finished'
-                      : 'Demo mode — local only'),
+                      : 'Not connected'),
                 ),
               );
             },
@@ -59,7 +59,7 @@ class SyncStatusScreen extends StatelessWidget {
                     Text(
                       SupabaseConfig.isConfigured
                           ? 'Supabase connected'
-                          : 'Offline demo mode',
+                          : 'Not connected',
                       style: const TextStyle(
                           fontWeight: FontWeight.w800, fontSize: 16),
                     ),
@@ -67,7 +67,7 @@ class SyncStatusScreen extends StatelessWidget {
                     Text(
                       SupabaseConfig.isConfigured
                           ? SupabaseConfig.url
-                          : 'Data stays on this device until keys are configured.',
+                          : 'Sign in with Supabase to save sales and expenses.',
                       style: const TextStyle(
                           color: BizColors.muted, fontSize: 12),
                     ),

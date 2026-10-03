@@ -38,7 +38,7 @@ class _CreateBusinessScreenState extends State<CreateBusinessScreen> {
     }
     setState(() => loading = true);
     final store = context.read<AppStore>();
-    await store.createBusiness(
+    final ok = await store.createBusiness(
       name: name.text,
       phone: phone.text.trim().isEmpty ? null : phone.text.trim(),
       email: email.text.trim().isEmpty ? null : email.text.trim(),
@@ -48,6 +48,12 @@ class _CreateBusinessScreenState extends State<CreateBusinessScreen> {
     );
     setState(() => loading = false);
     if (!mounted) return;
+    if (!ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(store.lastError ?? 'Could not create business')),
+      );
+      return;
+    }
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => const MainShell()),
       (_) => false,

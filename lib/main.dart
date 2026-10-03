@@ -14,14 +14,14 @@ Future<void> main() async {
     try {
       await Supabase.initialize(
         url: SupabaseConfig.url,
-        anonKey: SupabaseConfig.anonKey,
+        publishableKey: SupabaseConfig.anonKey,
       );
       debugPrint('Supabase initialized: ${SupabaseConfig.url}');
     } catch (e) {
-      debugPrint('Supabase init failed (continuing in local demo): $e');
+      debugPrint('Supabase init failed: $e');
     }
   } else {
-    debugPrint('Supabase not configured — demo offline mode');
+    debugPrint('Supabase not configured');
   }
 
   final store = AppStore();

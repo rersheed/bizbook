@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import '../../core/theme.dart';
 import '../../data/app_store.dart';
+import '../../models/models.dart';
 
 class RecordExpenseScreen extends StatefulWidget {
   const RecordExpenseScreen({super.key});
@@ -52,7 +53,7 @@ class _RecordExpenseScreenState extends State<RecordExpenseScreen> {
           (c) => c.id == categoryId,
           orElse: () => null,
         );
-    await store.recordExpense(
+    final exp = await store.recordExpense(
       description: description.text,
       amount: amt,
       categoryId: categoryId,
@@ -62,8 +63,18 @@ class _RecordExpenseScreenState extends State<RecordExpenseScreen> {
     );
     setState(() => saving = false);
     if (!mounted) return;
+    if (exp.syncStatus == SyncStatus.failed) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(store.lastError ?? 'Could not save expense')),
+      );
+      return;
+    }
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Expense saved')),
+      SnackBar(
+        content: Text(exp.syncStatus == SyncStatus.pending
+            ? 'Saved on this device. Will sync when online.'
+            : 'Expense saved'),
+      ),
     );
     Navigator.pop(context);
   }

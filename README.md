@@ -4,14 +4,11 @@ Simple small-business **sales & expense** tracker for owners and staff.
 
 **Live (GitHub Pages):** https://rersheed.github.io/bizbook/
 
-## Demo logins
+## Accounts
 
-| Role  | Email                 | Password |
-|-------|-----------------------|----------|
-| Owner | `owner@bizbook.demo`  | `demo1234` |
-| Staff | `staff@bizbook.demo`  | `demo1234` |
+Sign up with email and password (Supabase Auth). After signup, create your business — you become the owner. Owners add staff with an email and password from the Staff screen. Default currency is NGN.
 
-Demo business: **Haruna Stores** (NGN ₦) with sample products, sales, and expenses.
+There is no demo login. The login page links the Android APK.
 
 ## Roles
 
@@ -43,7 +40,7 @@ Migration (applied by parent via MCP; mirrored in repo):
 supabase/migrations/001_bizbook_v1.sql
 ```
 
-Tables: `profiles`, `businesses`, `business_members`, `products`, `sales`, `sale_items`, `expenses`, `expense_categories`, `audit_logs` + demo-open RLS.
+Tables: `profiles`, `businesses`, `business_members`, `products`, `sales`, `sale_items`, `expenses`, `expense_categories`, `audit_logs`. RLS is membership-scoped (`002_membership_rls.sql`): anon has no access. Owners manage staff, products, and all sales/expenses. Staff record sales and expenses and can read their business.
 
 ## Run locally
 
@@ -80,4 +77,4 @@ flutter build apk --release \
 
 ## License
 
-Private/demo use for Haruna Saidu / rersheed.
+Private use for Haruna Saidu / rersheed.

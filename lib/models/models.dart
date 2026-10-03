@@ -401,6 +401,7 @@ class SyncQueueItem {
   final SyncStatus status;
   final DateTime createdAt;
   final String? error;
+  final Map<String, dynamic>? payload;
 
   const SyncQueueItem({
     required this.id,
@@ -409,6 +410,7 @@ class SyncQueueItem {
     required this.status,
     required this.createdAt,
     this.error,
+    this.payload,
   });
 
   Map<String, dynamic> toJson() => {
@@ -418,6 +420,7 @@ class SyncQueueItem {
         'status': status.name,
         'createdAt': createdAt.toIso8601String(),
         'error': error,
+        'payload': payload,
       };
 
   factory SyncQueueItem.fromJson(Map<String, dynamic> j) => SyncQueueItem(
@@ -430,5 +433,8 @@ class SyncQueueItem {
         ),
         createdAt: DateTime.parse(j['createdAt'] as String),
         error: j['error'] as String?,
+        payload: j['payload'] == null
+            ? null
+            : Map<String, dynamic>.from(j['payload'] as Map),
       );
 }

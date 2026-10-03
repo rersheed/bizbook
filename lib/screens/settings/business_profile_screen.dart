@@ -48,7 +48,7 @@ class _BusinessProfileScreenState extends State<BusinessProfileScreen> {
       return;
     }
     setState(() => saving = true);
-    await store.updateBusiness(store.business!.copyWith(
+    final ok = await store.updateBusiness(store.business!.copyWith(
       name: name.text.trim(),
       phone: phone.text.trim().isEmpty ? null : phone.text.trim(),
       email: email.text.trim().isEmpty ? null : email.text.trim(),
@@ -59,8 +59,11 @@ class _BusinessProfileScreenState extends State<BusinessProfileScreen> {
     ));
     setState(() => saving = false);
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(const SnackBar(content: Text('Business updated')));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(ok ? 'Business updated' : (store.lastError ?? 'Update failed')),
+      ),
+    );
   }
 
   @override
