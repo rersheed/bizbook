@@ -3,8 +3,10 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/currency.dart';
+import '../../core/money.dart';
 import '../../core/theme.dart';
 import '../../data/app_store.dart';
+import '../../models/models.dart';
 import '../../widgets/widgets.dart';
 
 class ReportsScreen extends StatefulWidget {
@@ -19,6 +21,8 @@ class _ReportsScreenState extends State<ReportsScreen> {
   String? staffId;
   DateTime? customFrom;
   DateTime? customTo;
+  String creditFilter = 'all';
+  String? creditCustomerId;
 
   (DateTime, DateTime) _bounds() {
     final now = DateTime.now();
@@ -68,13 +72,38 @@ class _ReportsScreenState extends State<ReportsScreen> {
     final sales = store.salesTotal(from: from, to: to, userId: staffId);
     final expenses = store.expensesTotal(from: from, to: to, userId: staffId);
     final net = sales - expenses;
-    final activity = store.staffActivity(limit: 50).where((e) {
+    final activity = store.staffActivity(limit: 80).where((e) {
       final at = e['at'] as DateTime;
-      if (at.isBefore(from) || at.isAfter(to)) return false;
+      if (at.isBefore(from) || !at.isBefore(to)) return false;
       if (staffId == null) return true;
-      final member = store.members.where((m) => m.userId == staffId);
-      if (member.isEmpty) return true;
-      return e['by'] == member.first.displayName;
+      return e['userId'] == staffId;
+    }).toList();
+    final credits = store.credits.where((c) {
+      if (c.creditDate.isBefore(from) || !c.creditDate.isBefore(to)) return false;
+      if (creditCustomerId != null && c.customerId != creditCustomerId) {
+        return false;
+      }
+      switch (creditFilter) {
+        case 'unpaid':
+          return c.status == CreditStatus.unpaid;
+        case 'partial':
+          return c.status == CreditStatus.partial;
+        case 'paid':
+          return c.status == CreditStatus.paid;
+        case 'overdue':
+          return c.isOverdue;
+        default:
+          return true;
+      }
+    }).toList();
+    final repayments = store.repayments.where((rep) {
+      if (rep.repaymentDate.isBefore(from) || !rep.repaymentDate.isBefore(to)) {
+        return false;
+      }
+      if (creditCustomerId != null && rep.customerId != creditCustomerId) {
+        return false;
+      }
+      return true;
     }).toList();
 
     return Scaffold(
@@ -129,11 +158,98 @@ class _ReportsScreenState extends State<ReportsScreen> {
                     _row('Expenses', formatMoney(expenses, symbol: sym),
                         BizColors.highlight),
                     const Divider(),
-                    _row('Estimated net', formatMoney(net, symbol: sym),
+                    _row('Net (sales − expenses)', formatMoney(net, symbol: sym),
                         net >= 0 ? BizColors.primary : BizColors.danger),
                   ],
                 ),
               ),
+              const SizedBox(height: 20),
+              const SectionHeader(title: 'Credit'),
+              const SizedBox(height: 8),
+              FilterChipRow(
+                labels: const ['All', 'Unpaid', 'Partial', 'Paid', 'Overdue'],
+                selected: const ['all', 'unpaid', 'partial', 'paid', 'overdue']
+                    .indexOf(creditFilter),
+                onSelected: (i) => setState(() {
+                  creditFilter = const [
+                    'all',
+                    'unpaid',
+                    'partial',
+                    'paid',
+                    'overdue'
+                  ][i];
+                }),
+              ),
+              const SizedBox(height: 8),
+              DropdownButtonFormField<String?>(
+                value: creditCustomerId,
+                decoration: const InputDecoration(labelText: 'Customer'),
+                items: [
+                  const DropdownMenuItem(value: null, child: Text('All customers')),
+                  ...store.customers.map((c) => DropdownMenuItem(
+                        value: c.id,
+                        child: Text(c.name),
+                      )),
+                ],
+                onChanged: (v) => setState(() => creditCustomerId = v),
+              ),
+              const SizedBox(height: 8),
+              if (credits.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 8),
+                  child: Text('No credits in this range',
+                      style: TextStyle(color: BizColors.muted)),
+                )
+              else
+                ...credits.map((c) {
+                  final repaid = moneyToKobo(c.originalAmount) -
+                      moneyToKobo(c.outstandingAmount);
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: SoftCard(
+                      padding: const EdgeInsets.all(12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(store.customerName(c.customerId),
+                              style: const TextStyle(fontWeight: FontWeight.w800)),
+                          Text(c.description,
+                              style: const TextStyle(color: BizColors.muted)),
+                          const SizedBox(height: 6),
+                          Text(
+                            'Original ${formatMoney(c.originalAmount, symbol: sym)} · repaid ${formatMoney(koboToMoney(repaid < 0 ? 0 : repaid), symbol: sym)} · outstanding ${formatMoney(c.outstandingAmount, symbol: sym)}',
+                          ),
+                          Text(
+                            '${c.status.name}${c.dueDate == null ? '' : ' · due ${DateFormat('d MMM yyyy').format(c.dueDate!)}'}${c.isOverdue ? ' · overdue' : ''} · ${c.recordedByName}',
+                            style: const TextStyle(
+                                color: BizColors.muted, fontSize: 12),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                }),
+              const SizedBox(height: 16),
+              const SectionHeader(title: 'Repayments'),
+              const SizedBox(height: 8),
+              if (repayments.isEmpty)
+                const Text('No repayments in this range',
+                    style: TextStyle(color: BizColors.muted))
+              else
+                ...repayments.map((rep) => Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: ActivityTile(
+                        icon: Icons.south_west,
+                        iconBg: BizColors.accent,
+                        iconColor: BizColors.primary,
+                        title:
+                            '${store.customerName(rep.customerId)} · ${store.creditById(rep.creditId)?.description ?? 'Repayment'}',
+                        subtitle:
+                            '${rep.recordedByName} · ${friendlyDate(rep.repaymentDate)}',
+                        trailing: formatMoney(rep.amount, symbol: sym),
+                        trailingColor: BizColors.secondary,
+                      ),
+                    )),
               const SizedBox(height: 20),
               const SectionHeader(title: 'Staff activity'),
               const SizedBox(height: 8),

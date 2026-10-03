@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../../core/theme.dart';
 import '../expenses/expenses_screen.dart';
 import '../home/home_screen.dart';
-import '../products/products_screen.dart';
+import '../credit/credit_book_screen.dart';
 import '../sales/sales_screen.dart';
 import '../settings/more_screen.dart';
 
@@ -21,7 +21,7 @@ class _MainShellState extends State<MainShell> {
     HomeScreen(),
     SalesScreen(),
     ExpensesScreen(),
-    ProductsScreen(),
+    CreditBookScreen(),
     MoreScreen(),
   ];
 
@@ -53,9 +53,9 @@ class _MainShellState extends State<MainShell> {
             label: 'Expenses',
           ),
           NavigationDestination(
-            icon: Icon(Icons.inventory_2_outlined),
-            selectedIcon: Icon(Icons.inventory_2, color: BizColors.primary),
-            label: 'Products',
+            icon: Icon(Icons.menu_book_outlined),
+            selectedIcon: Icon(Icons.menu_book, color: BizColors.primary),
+            label: 'Credit',
           ),
           NavigationDestination(
             icon: Icon(Icons.more_horiz),

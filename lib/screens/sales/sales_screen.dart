@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../core/currency.dart';
 import '../../core/theme.dart';
 import '../../data/app_store.dart';
+import '../../models/models.dart';
 import '../../widgets/widgets.dart';
 import 'record_sale_screen.dart';
 import 'sale_detail_screen.dart';
@@ -111,6 +112,18 @@ class _SalesScreenState extends State<SalesScreen> {
                                     maxLines: 2,
                                     overflow: TextOverflow.ellipsis,
                                     style: const TextStyle(fontSize: 13)),
+                                if (s.paymentStatus != PaymentStatus.paid ||
+                                    s.customerId != null)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 4),
+                                    child: Text(
+                                      s.customerId == null
+                                          ? s.paymentStatus.name
+                                          : '${s.paymentStatus.name} · ${store.customerName(s.customerId)}',
+                                      style: const TextStyle(
+                                          color: BizColors.muted, fontSize: 12),
+                                    ),
+                                  ),
                                 const SizedBox(height: 8),
                                 Row(
                                   children: [

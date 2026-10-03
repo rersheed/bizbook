@@ -6,13 +6,15 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 
+import '../core/money.dart';
 import '../core/supabase_config.dart';
 import '../models/models.dart';
 
 const _uuid = Uuid();
 
 /// Online store backed by Supabase Auth + Postgres.
-/// A short local queue retries sales, expenses, and products if the network drops.
+/// A short local queue retries customers, sales, expenses, credits,
+/// repayments, and products if the network drops.
 class AppStore extends ChangeNotifier {
   static const _queueKey = 'bizbook_sync_queue_v2';
 
@@ -24,6 +26,9 @@ class AppStore extends ChangeNotifier {
   List<Sale> sales = [];
   List<Expense> expenses = [];
   List<ExpenseCategory> categories = [];
+  List<Customer> customers = [];
+  List<CustomerCredit> credits = [];
+  List<CreditRepayment> repayments = [];
   List<SyncQueueItem> syncQueue = [];
   bool loaded = false;
   bool accessDisabled = false;
@@ -117,6 +122,9 @@ class AppStore extends ChangeNotifier {
       products = [];
       sales = [];
       expenses = [];
+      customers = [];
+      credits = [];
+      repayments = [];
       await _loadCategories(null);
       lastError = 'Your access to this business is disabled. Ask the owner.';
       notifyListeners();
@@ -130,6 +138,9 @@ class AppStore extends ChangeNotifier {
       products = [];
       sales = [];
       expenses = [];
+      customers = [];
+      credits = [];
+      repayments = [];
       await _loadCategories(null);
       notifyListeners();
       return;
@@ -182,6 +193,37 @@ class AppStore extends ChangeNotifier {
           .order('expense_date', ascending: false),
     );
     expenses = expenseList.map(_expense).toList();
+
+    final customerList = _rows(
+      await db
+          .from('customers')
+          .select()
+          .eq('business_id', bizId)
+          .isFilter('deleted_at', null)
+          .order('name'),
+    );
+    customers = customerList.map(_customer).toList();
+
+    final creditList = _rows(
+      await db
+          .from('customer_credits')
+          .select()
+          .eq('business_id', bizId)
+          .isFilter('deleted_at', null)
+          .order('credit_date', ascending: false),
+    );
+    credits = creditList.map(_credit).toList();
+
+    final repaymentList = _rows(
+      await db
+          .from('credit_repayments')
+          .select()
+          .eq('business_id', bizId)
+          .isFilter('deleted_at', null)
+          .order('repayment_date', ascending: false),
+    );
+    repayments = repaymentList.map(_repayment).toList();
+
     await _loadCategories(bizId);
     _materializePending();
     notifyListeners();
@@ -302,6 +344,9 @@ class AppStore extends ChangeNotifier {
     sales = [];
     expenses = [];
     categories = [];
+    customers = [];
+    credits = [];
+    repayments = [];
     accessDisabled = false;
   }
 
@@ -419,35 +464,166 @@ class AppStore extends ChangeNotifier {
     required List<SaleItem> items,
     String? note,
     DateTime? soldAt,
+    String? customerId,
+    PaymentStatus paymentStatus = PaymentStatus.paid,
+    int? paidKobo,
+    DateTime? dueDate,
   }) async {
     lastError = null;
-    final total = items.fold<double>(0, (a, b) => a + b.lineTotal);
+    if (business == null || currentUser == null) {
+      lastError = 'Sign in first';
+      notifyListeners();
+      return _rejectedSale(items);
+    }
+    final normalized = <SaleItem>[];
+    var totalKobo = 0;
+    for (final item in items) {
+      final kobo = lineKobo(item.quantity, item.unitPrice);
+      totalKobo += kobo;
+      normalized.add(SaleItem(
+        id: item.id,
+        productId: item.productId,
+        productName: item.productName,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        lineTotal: koboToMoney(kobo),
+      ));
+    }
+    if (totalKobo <= 0) {
+      lastError = 'Enter an amount greater than 0';
+      notifyListeners();
+      return _rejectedSale(items);
+    }
+
+    var paid = totalKobo;
+    var onCredit = 0;
+    if (paymentStatus == PaymentStatus.credit) {
+      paid = 0;
+      onCredit = totalKobo;
+    } else if (paymentStatus == PaymentStatus.partial) {
+      paid = paidKobo ?? 0;
+      onCredit = totalKobo - paid;
+    }
+    if (paymentStatus != PaymentStatus.paid &&
+        (customerId == null || customerId.isEmpty)) {
+      lastError = 'Choose a customer for partial and credit sales';
+      notifyListeners();
+      return _rejectedSale(items);
+    }
+    if (paymentStatus == PaymentStatus.partial && (paid <= 0 || onCredit <= 0)) {
+      lastError = 'Partial payment must be more than 0 and less than the total';
+      notifyListeners();
+      return _rejectedSale(items);
+    }
+
+    final when = soldAt ?? DateTime.now();
     final sale = Sale(
       id: _uuid.v4(),
       businessId: business!.id,
       recordedBy: currentUser!.id,
       recordedByName: currentUser!.fullName,
-      total: total,
+      total: koboToMoney(totalKobo),
+      customerId: customerId,
+      paymentStatus: paymentStatus,
+      amountPaid: koboToMoney(paid),
+      amountOnCredit: koboToMoney(onCredit),
       note: note,
-      soldAt: soldAt ?? DateTime.now(),
-      items: items,
+      soldAt: when,
+      items: normalized,
       syncStatus: SyncStatus.pending,
     );
+    CustomerCredit? credit;
+    if (onCredit > 0) {
+      final names = normalized.map((i) => i.productName).where((n) => n.isNotEmpty).join(', ');
+      final description = names.isEmpty
+          ? 'Credit sale'
+          : (names.length > 140 ? '${names.substring(0, 137)}...' : names);
+      credit = CustomerCredit(
+        id: _uuid.v4(),
+        businessId: business!.id,
+        customerId: customerId!,
+        saleId: sale.id,
+        recordedBy: currentUser!.id,
+        recordedByName: currentUser!.fullName,
+        description: description,
+        originalAmount: koboToMoney(onCredit),
+        outstandingAmount: koboToMoney(onCredit),
+        creditDate: when,
+        dueDate: dueDate,
+        status: CreditStatus.unpaid,
+        note: note,
+        syncStatus: SyncStatus.pending,
+      );
+    }
+
     sales = [sale, ...sales];
+    if (credit != null) credits = [credit, ...credits];
     notifyListeners();
-    final payload = _salePayload(sale);
-    final status = await _attempt(
-      entity: 'sale',
-      entityId: sale.id,
-      payload: payload,
-      op: () => _pushSale(payload),
-    );
-    final saved = sale.copyWith(syncStatus: status);
+
+    final customerPending = customerId != null &&
+        customerById(customerId)?.syncStatus == SyncStatus.pending;
+    final salePayload = _salePayload(sale);
+    final SyncStatus saleStatus;
+    if (customerPending) {
+      saleStatus = SyncStatus.pending;
+      _queueNew('sale', sale.id, saleStatus, null, salePayload);
+      await _persistQueue();
+    } else {
+      saleStatus = await _attempt(
+        entity: 'sale',
+        entityId: sale.id,
+        payload: salePayload,
+        op: () => _pushSale(salePayload),
+      );
+    }
+    final linked = credit;
+    if (linked != null) {
+      final creditPayload = _creditPayload(linked, asNew: true);
+      final SyncStatus creditStatus;
+      if (saleStatus == SyncStatus.synced) {
+        creditStatus = await _attempt(
+          entity: 'credit',
+          entityId: linked.id,
+          payload: creditPayload,
+          op: () => _pushCredit(creditPayload),
+        );
+      } else {
+        creditStatus = saleStatus;
+        _queueNew(
+          'credit',
+          linked.id,
+          creditStatus,
+          saleStatus == SyncStatus.failed ? lastError : null,
+          creditPayload,
+        );
+        await _persistQueue();
+      }
+      final ci = credits.indexWhere((c) => c.id == linked.id);
+      if (ci >= 0) {
+        credits = [...credits]..[ci] = linked.copyWith(syncStatus: creditStatus);
+      }
+      if (saleStatus == SyncStatus.synced && creditStatus == SyncStatus.failed) {
+        lastError ??= 'Sale saved, but the linked credit did not sync';
+      }
+    }
+    final saved = sale.copyWith(syncStatus: saleStatus);
     final idx = sales.indexWhere((s) => s.id == sale.id);
     if (idx >= 0) sales = [...sales]..[idx] = saved;
+    _recomputeCredits();
     notifyListeners();
     return saved;
   }
+
+  Sale _rejectedSale(List<SaleItem> items) => Sale(
+        id: _uuid.v4(),
+        businessId: business?.id ?? '',
+        recordedBy: currentUser?.id ?? '',
+        recordedByName: currentUser?.fullName ?? '',
+        total: 0,
+        soldAt: DateTime.now(),
+        items: items,
+        syncStatus: SyncStatus.failed,
+      );
 
   Sale? saleById(String id) {
     try {
@@ -580,15 +756,28 @@ class AppStore extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    for (final item in List<SyncQueueItem>.from(syncQueue)) {
-      if (item.status == SyncStatus.synced || item.payload == null) continue;
+    final pending = [
+      for (final item in syncQueue)
+        if (item.status != SyncStatus.synced && item.payload != null) item,
+    ]..sort((a, b) {
+        final rank = _entityRank(a.entity).compareTo(_entityRank(b.entity));
+        if (rank != 0) return rank;
+        return a.createdAt.compareTo(b.createdAt);
+      });
+    for (final item in pending) {
       try {
-        if (item.entity == 'sale') {
+        if (item.entity == 'customer') {
+          await _pushCustomer(item.payload!);
+        } else if (item.entity == 'sale') {
           await _pushSale(item.payload!);
         } else if (item.entity == 'expense') {
           await _pushExpense(item.payload!);
         } else if (item.entity == 'product') {
           await db.from('products').upsert(item.payload!);
+        } else if (item.entity == 'credit') {
+          await _pushCredit(item.payload!);
+        } else if (item.entity == 'repayment') {
+          await _pushRepayment(item.payload!);
         } else {
           continue;
         }
@@ -602,6 +791,7 @@ class AppStore extends ChangeNotifier {
       }
     }
     await _persistQueue();
+    _recomputeCredits();
     notifyListeners();
   }
 
@@ -721,10 +911,14 @@ class AppStore extends ChangeNotifier {
   Map<String, dynamic> _salePayload(Sale sale) => {
         'id': sale.id,
         'business_id': sale.businessId,
+        'customer_id': sale.customerId,
         'recorded_by': sale.recordedBy,
         'recorded_by_name': sale.recordedByName,
         'sale_date': sale.soldAt.toUtc().toIso8601String(),
-        'total_amount': sale.total,
+        'total_amount': koboToNumeric(moneyToKobo(sale.total)),
+        'payment_status': sale.paymentStatus.name,
+        'amount_paid': koboToNumeric(moneyToKobo(sale.amountPaid)),
+        'amount_on_credit': koboToNumeric(moneyToKobo(sale.amountOnCredit)),
         'note': sale.note,
         'items': sale.items
             .map((i) => {
@@ -755,8 +949,27 @@ class AppStore extends ChangeNotifier {
       } else if (item.entity == 'product' &&
           !products.any((p) => p.id == item.entityId)) {
         products = [...products, _product(item.payload!)];
+      } else if (item.entity == 'customer' &&
+          !customers.any((c) => c.id == item.entityId)) {
+        customers = [
+          ...customers,
+          _customer(item.payload!).copyWith(syncStatus: item.status),
+        ];
+      } else if (item.entity == 'credit' &&
+          !credits.any((c) => c.id == item.entityId)) {
+        credits = [
+          _credit(item.payload!).copyWith(syncStatus: item.status),
+          ...credits,
+        ];
+      } else if (item.entity == 'repayment' &&
+          !repayments.any((r) => r.id == item.entityId)) {
+        repayments = [
+          _repayment(item.payload!).copyWith(syncStatus: item.status),
+          ...repayments,
+        ];
       }
     }
+    _recomputeCredits();
   }
 
   Map<String, dynamic> _saleFromQueue(Map<String, dynamic> payload) {
@@ -774,6 +987,22 @@ class AppStore extends ChangeNotifier {
       final i = expenses.indexWhere((e) => e.id == entityId);
       if (i >= 0) {
         expenses = [...expenses]..[i] = expenses[i].copyWith(syncStatus: status);
+      }
+    } else if (entity == 'customer') {
+      final i = customers.indexWhere((e) => e.id == entityId);
+      if (i >= 0) {
+        customers = [...customers]..[i] = customers[i].copyWith(syncStatus: status);
+      }
+    } else if (entity == 'credit') {
+      final i = credits.indexWhere((e) => e.id == entityId);
+      if (i >= 0) {
+        credits = [...credits]..[i] = credits[i].copyWith(syncStatus: status);
+      }
+    } else if (entity == 'repayment') {
+      final i = repayments.indexWhere((e) => e.id == entityId);
+      if (i >= 0) {
+        repayments = [...repayments]
+          ..[i] = repayments[i].copyWith(syncStatus: status);
       }
     }
   }
@@ -919,19 +1148,39 @@ class AppStore extends ChangeNotifier {
 
   Sale _sale(Map<String, dynamic> j) {
     final rawItems = (j['sale_items'] ?? j['items'] ?? []) as List;
+    final total = _num(j['total_amount'] ?? j['total']);
+    final statusName = (j['payment_status'] ?? j['paymentStatus'])?.toString();
+    final payment = PaymentStatus.values.firstWhere(
+      (e) => e.name == statusName,
+      orElse: () => PaymentStatus.paid,
+    );
+    final hasCredit = j['amount_on_credit'] != null || j['amountOnCredit'] != null;
+    final onCredit = hasCredit
+        ? _num(j['amount_on_credit'] ?? j['amountOnCredit'])
+        : (payment == PaymentStatus.credit ? total : 0);
+    final hasPaid = j['amount_paid'] != null || j['amountPaid'] != null;
+    final paid = hasPaid ? _num(j['amount_paid'] ?? j['amountPaid']) : total - onCredit;
+    final queued = j['syncStatus']?.toString();
     return Sale(
       id: j['id'].toString(),
       businessId: (j['business_id'] ?? j['businessId']).toString(),
       recordedBy: (j['recorded_by'] ?? j['recordedBy'] ?? '').toString(),
       recordedByName:
           (j['recorded_by_name'] ?? j['recordedByName'] ?? '') as String,
-      total: _num(j['total_amount'] ?? j['total']),
+      total: total,
+      customerId: (j['customer_id'] ?? j['customerId'])?.toString(),
+      paymentStatus: payment,
+      amountPaid: paid.toDouble(),
+      amountOnCredit: onCredit.toDouble(),
       note: j['note'] as String?,
       soldAt: _time(j['sale_date'] ?? j['soldAt']),
       items: rawItems
           .map((e) => _item(Map<String, dynamic>.from(e as Map)))
           .toList(),
-      syncStatus: SyncStatus.synced,
+      syncStatus: SyncStatus.values.firstWhere(
+        (e) => e.name == queued,
+        orElse: () => SyncStatus.synced,
+      ),
     );
   }
 
@@ -1016,7 +1265,7 @@ class AppStore extends ChangeNotifier {
     return list.take(limit).toList();
   }
 
-  List<Map<String, dynamic>> staffActivity({int limit = 12}) {
+  List<Map<String, dynamic>> staffActivity({int limit = 12, String? userId}) {
     final events = <Map<String, dynamic>>[];
     for (final s in sales) {
       events.add({
@@ -1025,6 +1274,7 @@ class AppStore extends ChangeNotifier {
             'Sale · ${s.items.map((i) => i.productName).take(2).join(', ')}',
         'amount': s.total,
         'by': s.recordedByName,
+        'userId': s.recordedBy,
         'at': s.soldAt,
         'id': s.id,
       });
@@ -1035,13 +1285,497 @@ class AppStore extends ChangeNotifier {
         'title': e.description,
         'amount': e.amount,
         'by': e.recordedByName,
+        'userId': e.recordedBy,
         'at': e.spentAt,
         'id': e.id,
       });
     }
-    events.sort(
+    for (final c in credits) {
+      events.add({
+        'type': 'credit',
+        'title': 'Credit · ${c.description}',
+        'amount': c.originalAmount,
+        'by': c.recordedByName,
+        'userId': c.recordedBy,
+        'at': c.creditDate,
+        'id': c.id,
+      });
+    }
+    for (final r in repayments) {
+      final credit = creditById(r.creditId);
+      events.add({
+        'type': 'repayment',
+        'title': 'Repayment · ${credit?.description ?? 'Credit'}',
+        'amount': r.amount,
+        'by': r.recordedByName,
+        'userId': r.recordedBy,
+        'at': r.repaymentDate,
+        'id': r.id,
+      });
+    }
+    final filtered = userId == null
+        ? events
+        : events.where((e) => e['userId'] == userId).toList();
+    filtered.sort(
         (a, b) => (b['at'] as DateTime).compareTo(a['at'] as DateTime));
-    return events.take(limit).toList();
+    return filtered.take(limit).toList();
+  }
+
+  Customer? customerById(String? id) {
+    if (id == null) return null;
+    for (final c in customers) {
+      if (c.id == id) return c;
+    }
+    return null;
+  }
+
+  CustomerCredit? creditById(String? id) {
+    if (id == null) return null;
+    for (final c in credits) {
+      if (c.id == id) return c;
+    }
+    return null;
+  }
+
+  String customerName(String? id) => customerById(id)?.name ?? 'Customer';
+
+  int outstandingKobo({String? customerId}) {
+    var total = 0;
+    for (final c in credits) {
+      if (customerId != null && c.customerId != customerId) continue;
+      total += moneyToKobo(c.outstandingAmount);
+    }
+    return total;
+  }
+
+  int get customersOwing {
+    final ids = <String>{};
+    for (final c in credits) {
+      if (moneyToKobo(c.outstandingAmount) > 0) ids.add(c.customerId);
+    }
+    return ids.length;
+  }
+
+  List<CustomerCredit> openCredits({String? customerId}) {
+    final list = credits
+        .where((c) =>
+            moneyToKobo(c.outstandingAmount) > 0 &&
+            (customerId == null || c.customerId == customerId))
+        .toList()
+      ..sort((a, b) => b.creditDate.compareTo(a.creditDate));
+    return list;
+  }
+
+  Future<Customer?> saveCustomer({
+    String? id,
+    required String name,
+    String? phone,
+    String? email,
+    String? address,
+    String? note,
+  }) async {
+    lastError = null;
+    if (business == null || currentUser == null) {
+      lastError = 'Sign in first';
+      notifyListeners();
+      return null;
+    }
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) {
+      lastError = 'Customer name is required';
+      notifyListeners();
+      return null;
+    }
+    final existing = id == null ? null : customerById(id);
+    if (existing != null &&
+        !isOwner &&
+        existing.syncStatus == SyncStatus.synced) {
+      lastError = 'Only the owner can edit customers';
+      notifyListeners();
+      return null;
+    }
+    final customer = Customer(
+      id: existing?.id ?? _uuid.v4(),
+      businessId: business!.id,
+      name: trimmed,
+      phone: _blank(phone),
+      email: _blank(email),
+      address: _blank(address),
+      note: _blank(note),
+      createdAt: existing?.createdAt ?? DateTime.now(),
+      syncStatus: SyncStatus.pending,
+    );
+    final i = customers.indexWhere((c) => c.id == customer.id);
+    customers = i >= 0
+        ? ([...customers]..[i] = customer)
+        : [...customers, customer];
+    customers.sort(
+        (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    notifyListeners();
+    final payload = _customerPayload(customer);
+    final status = await _attempt(
+      entity: 'customer',
+      entityId: customer.id,
+      payload: payload,
+      op: () => _pushCustomer(payload),
+    );
+    final saved = customer.copyWith(syncStatus: status);
+    final idx = customers.indexWhere((c) => c.id == customer.id);
+    if (idx >= 0) customers = [...customers]..[idx] = saved;
+    notifyListeners();
+    return saved;
+  }
+
+  Future<CustomerCredit?> addCredit({
+    required String customerId,
+    required String description,
+    required double amount,
+    DateTime? creditDate,
+    DateTime? dueDate,
+    String? note,
+    String? saleId,
+  }) async {
+    lastError = null;
+    if (business == null || currentUser == null) {
+      lastError = 'Sign in first';
+      notifyListeners();
+      return null;
+    }
+    final desc = description.trim();
+    final kobo = moneyToKobo(amount);
+    if (desc.isEmpty) {
+      lastError = 'Description is required';
+      notifyListeners();
+      return null;
+    }
+    if (kobo <= 0) {
+      lastError = 'Enter an amount greater than 0';
+      notifyListeners();
+      return null;
+    }
+    if (customerById(customerId) == null) {
+      lastError = 'Choose a customer';
+      notifyListeners();
+      return null;
+    }
+    final when = creditDate ?? DateTime.now();
+    final credit = CustomerCredit(
+      id: _uuid.v4(),
+      businessId: business!.id,
+      customerId: customerId,
+      saleId: saleId,
+      recordedBy: currentUser!.id,
+      recordedByName: currentUser!.fullName,
+      description: desc,
+      originalAmount: koboToMoney(kobo),
+      outstandingAmount: koboToMoney(kobo),
+      creditDate: when,
+      dueDate: dueDate,
+      status: CreditStatus.unpaid,
+      note: _blank(note),
+      syncStatus: SyncStatus.pending,
+    );
+    credits = [credit, ...credits];
+    notifyListeners();
+    final payload = _creditPayload(credit, asNew: true);
+    final customerPending =
+        customerById(customerId)?.syncStatus == SyncStatus.pending;
+    final salePending =
+        saleId != null && saleById(saleId)?.syncStatus == SyncStatus.pending;
+    final SyncStatus status;
+    if (customerPending || salePending) {
+      status = SyncStatus.pending;
+      _queueNew('credit', credit.id, status, null, payload);
+      await _persistQueue();
+    } else {
+      status = await _attempt(
+        entity: 'credit',
+        entityId: credit.id,
+        payload: payload,
+        op: () => _pushCredit(payload),
+      );
+    }
+    final saved = credit.copyWith(syncStatus: status);
+    final idx = credits.indexWhere((c) => c.id == credit.id);
+    if (idx >= 0) credits = [...credits]..[idx] = saved;
+    notifyListeners();
+    return saved;
+  }
+
+  /// Rejects overpayment and already-paid credits against the balance known
+  /// on this device, including repayments that are still queued.
+  String? repaymentError(CustomerCredit credit, double amount) {
+    if (credit.status == CreditStatus.paid ||
+        moneyToKobo(credit.outstandingAmount) <= 0) {
+      return 'This credit is already paid';
+    }
+    final kobo = moneyToKobo(amount);
+    if (kobo <= 0) return 'Enter an amount greater than 0';
+    if (kobo > moneyToKobo(credit.outstandingAmount)) {
+      return 'Amount is more than the outstanding balance';
+    }
+    return null;
+  }
+
+  Future<CreditRepayment?> recordRepayment({
+    required String creditId,
+    required double amount,
+    DateTime? repaymentDate,
+    String? note,
+  }) async {
+    lastError = null;
+    final credit = creditById(creditId);
+    if (business == null || currentUser == null || credit == null) {
+      lastError = 'Credit was not found';
+      notifyListeners();
+      return null;
+    }
+    final error = repaymentError(credit, amount);
+    if (error != null) {
+      lastError = error;
+      notifyListeners();
+      return null;
+    }
+    final kobo = moneyToKobo(amount);
+    final repayment = CreditRepayment(
+      id: _uuid.v4(),
+      businessId: business!.id,
+      customerId: credit.customerId,
+      creditId: credit.id,
+      recordedBy: currentUser!.id,
+      recordedByName: currentUser!.fullName,
+      amount: koboToMoney(kobo),
+      repaymentDate: repaymentDate ?? DateTime.now(),
+      note: _blank(note),
+      syncStatus: SyncStatus.pending,
+    );
+    repayments = [repayment, ...repayments];
+    _recomputeCredits();
+    notifyListeners();
+    final payload = _repaymentPayload(repayment);
+    final waiting = credit.syncStatus == SyncStatus.pending ||
+        customerById(credit.customerId)?.syncStatus == SyncStatus.pending;
+    final SyncStatus status;
+    if (waiting) {
+      status = SyncStatus.pending;
+      _queueNew('repayment', repayment.id, status, null, payload);
+      await _persistQueue();
+    } else {
+      status = await _attempt(
+        entity: 'repayment',
+        entityId: repayment.id,
+        payload: payload,
+        op: () => _pushRepayment(payload),
+      );
+    }
+    final saved = repayment.copyWith(syncStatus: status);
+    final idx = repayments.indexWhere((r) => r.id == repayment.id);
+    if (idx >= 0) repayments = [...repayments]..[idx] = saved;
+    notifyListeners();
+    return saved;
+  }
+
+  int _entityRank(String entity) {
+    switch (entity) {
+      case 'customer':
+        return 0;
+      case 'product':
+        return 1;
+      case 'sale':
+        return 2;
+      case 'expense':
+        return 3;
+      case 'credit':
+        return 4;
+      case 'repayment':
+        return 5;
+      default:
+        return 9;
+    }
+  }
+
+  String? _blank(String? value) {
+    final v = value?.trim();
+    if (v == null || v.isEmpty) return null;
+    return v;
+  }
+
+  String? _dateOnly(DateTime? value) {
+    if (value == null) return null;
+    final local = value.toLocal();
+    final month = local.month.toString().padLeft(2, '0');
+    final day = local.day.toString().padLeft(2, '0');
+    return '${local.year}-$month-$day';
+  }
+
+  Map<String, dynamic> _customerPayload(Customer customer) => {
+        'id': customer.id,
+        'business_id': customer.businessId,
+        'name': customer.name,
+        'phone': customer.phone,
+        'email': customer.email,
+        'address': customer.address,
+        'note': customer.note,
+      };
+
+  Map<String, dynamic> _creditPayload(CustomerCredit credit, {bool asNew = false}) => {
+        'id': credit.id,
+        'business_id': credit.businessId,
+        'customer_id': credit.customerId,
+        'sale_id': credit.saleId,
+        'recorded_by': credit.recordedBy,
+        'recorded_by_name': credit.recordedByName,
+        'description': credit.description,
+        'original_amount': koboToNumeric(moneyToKobo(credit.originalAmount)),
+        'outstanding_amount': koboToNumeric(
+          moneyToKobo(asNew ? credit.originalAmount : credit.outstandingAmount),
+        ),
+        'credit_date': credit.creditDate.toUtc().toIso8601String(),
+        'due_date': _dateOnly(credit.dueDate),
+        'status': asNew ? CreditStatus.unpaid.name : credit.status.name,
+        'note': credit.note,
+      };
+
+  Map<String, dynamic> _repaymentPayload(CreditRepayment repayment) => {
+        'id': repayment.id,
+        'business_id': repayment.businessId,
+        'customer_id': repayment.customerId,
+        'credit_id': repayment.creditId,
+        'recorded_by': repayment.recordedBy,
+        'recorded_by_name': repayment.recordedByName,
+        'amount': koboToNumeric(moneyToKobo(repayment.amount)),
+        'repayment_date': repayment.repaymentDate.toUtc().toIso8601String(),
+        'note': repayment.note,
+      };
+
+  Future<void> _pushCustomer(Map<String, dynamic> payload) async {
+    final db = _db!;
+    final existing = await db
+        .from('customers')
+        .select('id')
+        .eq('id', payload['id'])
+        .maybeSingle();
+    if (existing == null) {
+      await db.from('customers').insert(payload);
+      return;
+    }
+    if (!isOwner) return;
+    await db.from('customers').update({
+      'name': payload['name'],
+      'phone': payload['phone'],
+      'email': payload['email'],
+      'address': payload['address'],
+      'note': payload['note'],
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
+    }).eq('id', payload['id']);
+  }
+
+  Future<void> _pushCredit(Map<String, dynamic> payload) async {
+    final db = _db!;
+    final existing = await db
+        .from('customer_credits')
+        .select('id')
+        .eq('id', payload['id'])
+        .maybeSingle();
+    if (existing == null) {
+      final row = Map<String, dynamic>.from(payload);
+      row['outstanding_amount'] = row['original_amount'];
+      row['status'] = 'unpaid';
+      await db.from('customer_credits').insert(row);
+    }
+  }
+
+  Future<void> _pushRepayment(Map<String, dynamic> payload) async {
+    final db = _db!;
+    final existing = await db
+        .from('credit_repayments')
+        .select('id')
+        .eq('id', payload['id'])
+        .maybeSingle();
+    if (existing == null) {
+      await db.from('credit_repayments').insert(payload);
+    }
+  }
+
+  void _recomputeCredits() {
+    credits = [for (final credit in credits) _balanced(credit)];
+  }
+
+  CustomerCredit _balanced(CustomerCredit credit) {
+    final original = moneyToKobo(credit.originalAmount);
+    var repaid = 0;
+    for (final repayment in repayments) {
+      if (repayment.creditId == credit.id) {
+        repaid += moneyToKobo(repayment.amount);
+      }
+    }
+    final outstanding = original - repaid;
+    final safe = outstanding < 0 ? 0 : outstanding;
+    final status = safe <= 0
+        ? CreditStatus.paid
+        : safe >= original
+            ? CreditStatus.unpaid
+            : CreditStatus.partial;
+    return credit.copyWith(
+      outstandingAmount: koboToMoney(safe),
+      status: status,
+    );
+  }
+
+  Customer _customer(Map<String, dynamic> j) => Customer(
+        id: j['id'].toString(),
+        businessId: (j['business_id'] ?? j['businessId']).toString(),
+        name: (j['name'] ?? '') as String,
+        phone: j['phone'] as String?,
+        email: j['email'] as String?,
+        address: j['address'] as String?,
+        note: j['note'] as String?,
+        createdAt: _time(j['created_at'] ?? j['createdAt']),
+        syncStatus: SyncStatus.synced,
+      );
+
+  CustomerCredit _credit(Map<String, dynamic> j) => CustomerCredit(
+        id: j['id'].toString(),
+        businessId: (j['business_id'] ?? j['businessId']).toString(),
+        customerId: (j['customer_id'] ?? j['customerId']).toString(),
+        saleId: (j['sale_id'] ?? j['saleId'])?.toString(),
+        recordedBy: (j['recorded_by'] ?? j['recordedBy'] ?? '').toString(),
+        recordedByName:
+            (j['recorded_by_name'] ?? j['recordedByName'] ?? '') as String,
+        description: (j['description'] ?? '') as String,
+        originalAmount: _num(j['original_amount'] ?? j['originalAmount']),
+        outstandingAmount:
+            _num(j['outstanding_amount'] ?? j['outstandingAmount']),
+        creditDate: _time(j['credit_date'] ?? j['creditDate']),
+        dueDate: _parseDate(j['due_date'] ?? j['dueDate']),
+        status: CreditStatus.values.firstWhere(
+          (e) => e.name == (j['status']?.toString() ?? ''),
+          orElse: () => CreditStatus.unpaid,
+        ),
+        note: j['note'] as String?,
+        syncStatus: SyncStatus.synced,
+      );
+
+  CreditRepayment _repayment(Map<String, dynamic> j) => CreditRepayment(
+        id: j['id'].toString(),
+        businessId: (j['business_id'] ?? j['businessId']).toString(),
+        customerId: (j['customer_id'] ?? j['customerId']).toString(),
+        creditId: (j['credit_id'] ?? j['creditId']).toString(),
+        recordedBy: (j['recorded_by'] ?? j['recordedBy'] ?? '').toString(),
+        recordedByName:
+            (j['recorded_by_name'] ?? j['recordedByName'] ?? '') as String,
+        amount: _num(j['amount']),
+        repaymentDate: _time(j['repayment_date'] ?? j['repaymentDate']),
+        note: j['note'] as String?,
+        syncStatus: SyncStatus.synced,
+      );
+
+  DateTime? _parseDate(dynamic value) {
+    if (value == null) return null;
+    final raw = value.toString();
+    if (raw.isEmpty) return null;
+    final parsed = DateTime.parse(raw.length == 10 ? '${raw}T00:00:00' : raw);
+    return parsed.toLocal();
   }
 }
 

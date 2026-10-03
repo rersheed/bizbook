@@ -6,6 +6,8 @@ import '../../core/theme.dart';
 import '../../data/app_store.dart';
 import '../../widgets/widgets.dart';
 import '../auth/login_screen.dart';
+import '../credit/customers_screen.dart';
+import '../products/products_screen.dart';
 import '../reports/reports_screen.dart';
 import '../staff/staff_screen.dart';
 import 'business_profile_screen.dart';
@@ -60,6 +62,26 @@ class MoreScreen extends StatelessWidget {
               const SizedBox(height: 16),
               _tile(
                 context,
+                Icons.inventory_2_outlined,
+                'Products',
+                'Items you sell',
+                () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const ProductsScreen()),
+                ),
+              ),
+              _tile(
+                context,
+                Icons.people_outline,
+                'Customers',
+                'Credit customers',
+                () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const CustomersScreen()),
+                ),
+              ),
+              _tile(
+                context,
                 Icons.storefront_outlined,
                 'Business profile',
                 'Name, phone, currency',
@@ -85,7 +107,7 @@ class MoreScreen extends StatelessWidget {
                   context,
                   Icons.bar_chart_rounded,
                   'Reports',
-                  'Sales, expenses, net, staff activity',
+                  'Sales, expenses, credit, repayments',
                   () => Navigator.push(
                     context,
                     MaterialPageRoute(builder: (_) => const ReportsScreen()),

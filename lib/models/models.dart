@@ -246,12 +246,20 @@ class SaleItem {
       );
 }
 
+enum PaymentStatus { paid, partial, credit }
+
+enum CreditStatus { unpaid, partial, paid }
+
 class Sale {
   final String id;
   final String businessId;
   final String recordedBy;
   final String recordedByName;
   final double total;
+  final String? customerId;
+  final PaymentStatus paymentStatus;
+  final double amountPaid;
+  final double amountOnCredit;
   final String? note;
   final DateTime soldAt;
   final List<SaleItem> items;
@@ -263,6 +271,10 @@ class Sale {
     required this.recordedBy,
     required this.recordedByName,
     required this.total,
+    this.customerId,
+    this.paymentStatus = PaymentStatus.paid,
+    this.amountPaid = 0,
+    this.amountOnCredit = 0,
     this.note,
     required this.soldAt,
     required this.items,
@@ -275,6 +287,10 @@ class Sale {
         recordedBy: recordedBy,
         recordedByName: recordedByName,
         total: total,
+        customerId: customerId,
+        paymentStatus: paymentStatus,
+        amountPaid: amountPaid,
+        amountOnCredit: amountOnCredit,
         note: note,
         soldAt: soldAt,
         items: items,
@@ -287,28 +303,53 @@ class Sale {
         'recordedBy': recordedBy,
         'recordedByName': recordedByName,
         'total': total,
+        'customerId': customerId,
+        'paymentStatus': paymentStatus.name,
+        'amountPaid': amountPaid,
+        'amountOnCredit': amountOnCredit,
         'note': note,
         'soldAt': soldAt.toIso8601String(),
         'items': items.map((e) => e.toJson()).toList(),
         'syncStatus': syncStatus.name,
       };
 
-  factory Sale.fromJson(Map<String, dynamic> j) => Sale(
-        id: j['id'] as String,
-        businessId: j['businessId'] as String,
-        recordedBy: j['recordedBy'] as String,
-        recordedByName: j['recordedByName'] as String? ?? '',
-        total: (j['total'] as num).toDouble(),
-        note: j['note'] as String?,
-        soldAt: DateTime.parse(j['soldAt'] as String),
-        items: (j['items'] as List)
-            .map((e) => SaleItem.fromJson(Map<String, dynamic>.from(e as Map)))
-            .toList(),
-        syncStatus: SyncStatus.values.firstWhere(
-          (e) => e.name == j['syncStatus'],
-          orElse: () => SyncStatus.synced,
-        ),
-      );
+  factory Sale.fromJson(Map<String, dynamic> j) {
+    final total = (j['total'] as num?)?.toDouble() ??
+        (j['total_amount'] as num?)?.toDouble() ??
+        0;
+    final statusName = (j['paymentStatus'] ?? j['payment_status'])?.toString();
+    final status = PaymentStatus.values.firstWhere(
+      (e) => e.name == statusName,
+      orElse: () => PaymentStatus.paid,
+    );
+    final onCredit = j['amountOnCredit'] != null || j['amount_on_credit'] != null
+        ? ((j['amountOnCredit'] ?? j['amount_on_credit']) as num).toDouble()
+        : (status == PaymentStatus.credit ? total : 0);
+    final paid = j['amountPaid'] != null || j['amount_paid'] != null
+        ? ((j['amountPaid'] ?? j['amount_paid']) as num).toDouble()
+        : (total - onCredit);
+    return Sale(
+      id: j['id'] as String,
+      businessId: (j['businessId'] ?? j['business_id']) as String,
+      recordedBy: (j['recordedBy'] ?? j['recorded_by'] ?? '') as String,
+      recordedByName:
+          (j['recordedByName'] ?? j['recorded_by_name'] ?? '') as String,
+      total: total,
+      customerId: (j['customerId'] ?? j['customer_id']) as String?,
+      paymentStatus: status,
+      amountPaid: paid.toDouble(),
+      amountOnCredit: onCredit.toDouble(),
+      note: j['note'] as String?,
+      soldAt: DateTime.parse((j['soldAt'] ?? j['sale_date']) as String),
+      items: ((j['items'] ?? j['sale_items']) as List? ?? [])
+          .map((e) => SaleItem.fromJson(Map<String, dynamic>.from(e as Map)))
+          .toList(),
+      syncStatus: SyncStatus.values.firstWhere(
+        (e) => e.name == j['syncStatus'],
+        orElse: () => SyncStatus.synced,
+      ),
+    );
+  }
 }
 
 class Expense {
@@ -394,9 +435,253 @@ class ExpenseCategory {
       ExpenseCategory(id: j['id'] as String, name: j['name'] as String);
 }
 
+class Customer {
+  final String id;
+  final String businessId;
+  final String name;
+  final String? phone;
+  final String? email;
+  final String? address;
+  final String? note;
+  final DateTime createdAt;
+  final SyncStatus syncStatus;
+
+  const Customer({
+    required this.id,
+    required this.businessId,
+    required this.name,
+    this.phone,
+    this.email,
+    this.address,
+    this.note,
+    required this.createdAt,
+    this.syncStatus = SyncStatus.pending,
+  });
+
+  Customer copyWith({SyncStatus? syncStatus}) => Customer(
+        id: id,
+        businessId: businessId,
+        name: name,
+        phone: phone,
+        email: email,
+        address: address,
+        note: note,
+        createdAt: createdAt,
+        syncStatus: syncStatus ?? this.syncStatus,
+      );
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'businessId': businessId,
+        'name': name,
+        'phone': phone,
+        'email': email,
+        'address': address,
+        'note': note,
+        'createdAt': createdAt.toIso8601String(),
+        'syncStatus': syncStatus.name,
+      };
+
+  factory Customer.fromJson(Map<String, dynamic> j) => Customer(
+        id: j['id'] as String,
+        businessId: (j['businessId'] ?? j['business_id']) as String,
+        name: j['name'] as String,
+        phone: j['phone'] as String?,
+        email: j['email'] as String?,
+        address: j['address'] as String?,
+        note: j['note'] as String?,
+        createdAt: DateTime.parse((j['createdAt'] ?? j['created_at']) as String),
+        syncStatus: SyncStatus.values.firstWhere(
+          (e) => e.name == j['syncStatus'],
+          orElse: () => SyncStatus.synced,
+        ),
+      );
+}
+
+class CustomerCredit {
+  final String id;
+  final String businessId;
+  final String customerId;
+  final String? saleId;
+  final String recordedBy;
+  final String recordedByName;
+  final String description;
+  final double originalAmount;
+  final double outstandingAmount;
+  final DateTime creditDate;
+  final DateTime? dueDate;
+  final CreditStatus status;
+  final String? note;
+  final SyncStatus syncStatus;
+
+  const CustomerCredit({
+    required this.id,
+    required this.businessId,
+    required this.customerId,
+    this.saleId,
+    required this.recordedBy,
+    required this.recordedByName,
+    required this.description,
+    required this.originalAmount,
+    required this.outstandingAmount,
+    required this.creditDate,
+    this.dueDate,
+    required this.status,
+    this.note,
+    this.syncStatus = SyncStatus.pending,
+  });
+
+  bool get isOverdue {
+    if (dueDate == null || status == CreditStatus.paid) return false;
+    final now = DateTime.now();
+    final due = DateTime(dueDate!.year, dueDate!.month, dueDate!.day);
+    final today = DateTime(now.year, now.month, now.day);
+    return due.isBefore(today);
+  }
+
+  CustomerCredit copyWith({
+    SyncStatus? syncStatus,
+    double? outstandingAmount,
+    CreditStatus? status,
+  }) =>
+      CustomerCredit(
+        id: id,
+        businessId: businessId,
+        customerId: customerId,
+        saleId: saleId,
+        recordedBy: recordedBy,
+        recordedByName: recordedByName,
+        description: description,
+        originalAmount: originalAmount,
+        outstandingAmount: outstandingAmount ?? this.outstandingAmount,
+        creditDate: creditDate,
+        dueDate: dueDate,
+        status: status ?? this.status,
+        note: note,
+        syncStatus: syncStatus ?? this.syncStatus,
+      );
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'businessId': businessId,
+        'customerId': customerId,
+        'saleId': saleId,
+        'recordedBy': recordedBy,
+        'recordedByName': recordedByName,
+        'description': description,
+        'originalAmount': originalAmount,
+        'outstandingAmount': outstandingAmount,
+        'creditDate': creditDate.toIso8601String(),
+        'dueDate': dueDate?.toIso8601String(),
+        'status': status.name,
+        'note': note,
+        'syncStatus': syncStatus.name,
+      };
+
+  factory CustomerCredit.fromJson(Map<String, dynamic> j) => CustomerCredit(
+        id: j['id'] as String,
+        businessId: (j['businessId'] ?? j['business_id']) as String,
+        customerId: (j['customerId'] ?? j['customer_id']) as String,
+        saleId: (j['saleId'] ?? j['sale_id']) as String?,
+        recordedBy: (j['recordedBy'] ?? j['recorded_by'] ?? '') as String,
+        recordedByName:
+            (j['recordedByName'] ?? j['recorded_by_name'] ?? '') as String,
+        description: j['description'] as String,
+        originalAmount:
+            ((j['originalAmount'] ?? j['original_amount']) as num).toDouble(),
+        outstandingAmount:
+            ((j['outstandingAmount'] ?? j['outstanding_amount']) as num)
+                .toDouble(),
+        creditDate:
+            DateTime.parse((j['creditDate'] ?? j['credit_date']) as String),
+        dueDate: (j['dueDate'] ?? j['due_date']) == null
+            ? null
+            : DateTime.parse((j['dueDate'] ?? j['due_date']) as String),
+        status: CreditStatus.values.firstWhere(
+          (e) => e.name == (j['status']?.toString() ?? ''),
+          orElse: () => CreditStatus.unpaid,
+        ),
+        note: j['note'] as String?,
+        syncStatus: SyncStatus.values.firstWhere(
+          (e) => e.name == j['syncStatus'],
+          orElse: () => SyncStatus.synced,
+        ),
+      );
+}
+
+class CreditRepayment {
+  final String id;
+  final String businessId;
+  final String customerId;
+  final String creditId;
+  final String recordedBy;
+  final String recordedByName;
+  final double amount;
+  final DateTime repaymentDate;
+  final String? note;
+  final SyncStatus syncStatus;
+
+  const CreditRepayment({
+    required this.id,
+    required this.businessId,
+    required this.customerId,
+    required this.creditId,
+    required this.recordedBy,
+    required this.recordedByName,
+    required this.amount,
+    required this.repaymentDate,
+    this.note,
+    this.syncStatus = SyncStatus.pending,
+  });
+
+  CreditRepayment copyWith({SyncStatus? syncStatus}) => CreditRepayment(
+        id: id,
+        businessId: businessId,
+        customerId: customerId,
+        creditId: creditId,
+        recordedBy: recordedBy,
+        recordedByName: recordedByName,
+        amount: amount,
+        repaymentDate: repaymentDate,
+        note: note,
+        syncStatus: syncStatus ?? this.syncStatus,
+      );
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'businessId': businessId,
+        'customerId': customerId,
+        'creditId': creditId,
+        'recordedBy': recordedBy,
+        'recordedByName': recordedByName,
+        'amount': amount,
+        'repaymentDate': repaymentDate.toIso8601String(),
+        'note': note,
+        'syncStatus': syncStatus.name,
+      };
+
+  factory CreditRepayment.fromJson(Map<String, dynamic> j) => CreditRepayment(
+        id: j['id'] as String,
+        businessId: (j['businessId'] ?? j['business_id']) as String,
+        customerId: (j['customerId'] ?? j['customer_id']) as String,
+        creditId: (j['creditId'] ?? j['credit_id']) as String,
+        recordedBy: (j['recordedBy'] ?? j['recorded_by'] ?? '') as String,
+        recordedByName:
+            (j['recordedByName'] ?? j['recorded_by_name'] ?? '') as String,
+        amount: ((j['amount']) as num).toDouble(),
+        repaymentDate: DateTime.parse(
+            (j['repaymentDate'] ?? j['repayment_date']) as String),
+        note: j['note'] as String?,
+        syncStatus: SyncStatus.values.firstWhere(
+          (e) => e.name == j['syncStatus'],
+          orElse: () => SyncStatus.synced,
+        ),
+      );
+}
+
 class SyncQueueItem {
   final String id;
-  final String entity; // sale | expense | product
+  final String entity; // customer | sale | expense | product | credit | repayment
   final String entityId;
   final SyncStatus status;
   final DateTime createdAt;

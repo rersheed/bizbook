@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../core/currency.dart';
 import '../../core/theme.dart';
 import '../../data/app_store.dart';
+import '../../models/models.dart';
 import '../../widgets/widgets.dart';
 
 class SaleDetailScreen extends StatelessWidget {
@@ -59,6 +60,21 @@ class SaleDetailScreen extends StatelessWidget {
                     Text(sale.recordedByName,
                         style: const TextStyle(
                             fontWeight: FontWeight.w700, fontSize: 16)),
+                    const SizedBox(height: 12),
+                    const Text('Payment',
+                        style: TextStyle(color: BizColors.muted, fontSize: 12)),
+                    Text(sale.paymentStatus.name,
+                        style: const TextStyle(fontWeight: FontWeight.w700)),
+                    if (sale.customerId != null) ...[
+                      const SizedBox(height: 8),
+                      Text(store.customerName(sale.customerId),
+                          style: const TextStyle(fontWeight: FontWeight.w600)),
+                    ],
+                    if (sale.paymentStatus != PaymentStatus.paid) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                          'Paid ${formatMoney(sale.amountPaid, symbol: sym)} · on credit ${formatMoney(sale.amountOnCredit, symbol: sym)}'),
+                    ],
                     if (sale.note != null && sale.note!.isNotEmpty) ...[
                       const SizedBox(height: 12),
                       const Text('Note',

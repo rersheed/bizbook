@@ -72,7 +72,7 @@ class _RecordExpenseScreenState extends State<RecordExpenseScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(exp.syncStatus == SyncStatus.pending
-            ? 'Saved on this device. Will sync when online.'
+            ? 'Saved offline'
             : 'Expense saved'),
       ),
     );
