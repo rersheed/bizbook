@@ -22,7 +22,7 @@ class _LoginScreenState extends State<LoginScreen> {
   bool obscure = true;
 
   static final _apkUri = Uri.parse(
-    'https://github.com/rersheed/bizbook/releases/download/v0.1.0/bizbook-v0.1.0.apk',
+    'https://github.com/rersheed/bizbook/releases/download/v0.1.1/bizbook-v0.1.1.apk',
   );
 
   @override
