@@ -29,6 +29,8 @@ class AppStore extends ChangeNotifier {
   bool accessDisabled = false;
   String? lastError;
   String? staffNotice;
+  /// True when sign-up succeeded but the user must confirm their email first.
+  bool pendingEmailConfirm = false;
 
   bool get isLoggedIn => currentUser != null;
   bool get isOwner => membership?.role == MemberRole.owner;
@@ -248,6 +250,7 @@ class AppStore extends ChangeNotifier {
     String? phone,
   }) async {
     lastError = null;
+    pendingEmailConfirm = false;
     final db = _db;
     if (db == null) {
       lastError = 'Supabase is not configured';
@@ -264,6 +267,7 @@ class AppStore extends ChangeNotifier {
         },
       );
       if (res.session == null) {
+        pendingEmailConfirm = true;
         lastError =
             'Check your email to confirm the account, then sign in.';
         notifyListeners();
@@ -284,6 +288,7 @@ class AppStore extends ChangeNotifier {
       await _db?.auth.signOut();
     } catch (_) {}
     _clearSessionData();
+    pendingEmailConfirm = false;
     if (keepError) lastError = err;
     notifyListeners();
   }
